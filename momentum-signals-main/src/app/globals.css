@@ -1,0 +1,21 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  border-color: theme("colors.base.800");
+}
+
+body {
+  font-feature-settings: "tnum" 1;
+}
+
+::selection {
+  background-color: theme("colors.accent.500");
+  color: theme("colors.base.950");
+}
+
+:focus-visible {
+  outline: 2px solid theme("colors.accent.400");
+  outline-offset: 2px;
+}
