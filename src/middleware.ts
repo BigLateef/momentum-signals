@@ -1,9 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { jwtVerify } from "jose";
 import { neon } from "@neondatabase/serverless";
-import { detectDriver } from "@/db/raw-client";
 
 const SESSION_COOKIE = "ms_session";
+
+function isNeonDriver(databaseUrl: string) {
+  const override = process.env.DB_DRIVER?.toLowerCase();
+  if (override === "neon") return true;
+  if (override === "postgres") return false;
+  return databaseUrl.includes(".neon.tech");
+}
 
 function getSecret() {
   return new TextEncoder().encode(process.env.SESSION_SECRET);
@@ -26,24 +32,21 @@ export async function middleware(req: NextRequest) {
     const userId = payload.userId as string;
     const sessionVersion = payload.sessionVersion as number;
 
-    // Check the session hasn't been force-revoked by an admin. Middleware
-    // runs on the Edge runtime, which only supports fetch-based I/O.
     let sessionValid: boolean;
+    const databaseUrl = process.env.DATABASE_URL;
 
-    if (detectDriver(process.env.DATABASE_URL!) === "neon") {
-      // Neon's serverless driver works over plain HTTP fetch, so this is
-      // safe to run directly in Edge middleware — unchanged from before.
-      const sql = neon(process.env.DATABASE_URL!);
-      const rows = await sql("SELECT session_version FROM profiles WHERE id = $1 LIMIT 1", [
-        userId,
-      ]);
+    if (databaseUrl && isNeonDriver(databaseUrl)) {
+      // The Neon serverless driver uses fetch and is Edge-compatible.
+      const sql = neon(databaseUrl);
+      const rows = await sql(
+        "SELECT session_version FROM profiles WHERE id = $1 LIMIT 1",
+        [userId]
+      );
       const currentVersion = rows[0]?.session_version;
       sessionValid = currentVersion !== undefined && currentVersion === sessionVersion;
     } else {
-      // Supabase / any other standard Postgres: the app's DB layer uses
-      // postgres.js for this driver, which needs a real TCP socket that
-      // Edge can't open. Delegate the check to a Node.js-runtime API route
-      // instead — see src/app/api/internal/session-check/route.ts.
+      // Standard Postgres drivers require Node.js TCP APIs, so delegate the
+      // database check to the Node.js session-check route.
       const checkRes = await fetch(new URL("/api/internal/session-check", req.url), {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
