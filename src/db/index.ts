@@ -12,19 +12,13 @@ if (!process.env.DATABASE_URL) {
 const databaseUrl = process.env.DATABASE_URL;
 const driver = detectDriver(databaseUrl);
 
-// Neon path (default, unchanged from before): HTTP driver, no persistent
-// connection — the fit for Vercel serverless functions this app was
-// originally built around.
-//
-// Postgres path (Supabase or any other standard Postgres): real TCP
-// connection via postgres.js. max:1 keeps each serverless invocation to a
-// single connection so a burst of cold starts can't exhaust your
-// provider's connection limit — point DATABASE_URL at a pooled connection
-// string (Supabase's "Transaction pooler", port 6543; or Neon's own
-// "-pooler" endpoint if you ever switch DB_DRIVER=postgres against Neon)
-// rather than a direct one. prepare:false is required for pgbouncer
-// transaction-mode pooling and harmless otherwise.
-export const db =
-  driver === "neon"
-    ? drizzleNeon(neon(databaseUrl), { schema })
-    : drizzlePg(postgres(databaseUrl, { prepare: false, max: 1 }), { schema });
+// Both drivers implement the same Drizzle PostgreSQL query API. Keep the
+// provider-specific implementation behind this typed boundary so callers do
+// not receive a union of incompatible Drizzle database types.
+const neonDb = drizzleNeon(neon(databaseUrl), { schema });
+const postgresDb = drizzlePg(postgres(databaseUrl, { prepare: false, max: 1 }), { schema });
+
+// The runtime branch is provider-specific, but the exported query surface is
+// intentionally the shared Neon-compatible Drizzle API. postgres.js supports
+// the same operations at runtime, including returning(fields).
+export const db = (driver === "neon" ? neonDb : postgresDb) as typeof neonDb;
